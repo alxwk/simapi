@@ -26,6 +26,7 @@ typedef enum
     SIMULATORAPI_RFACTOR2          = 2,
     SIMULATORAPI_PROJECTCARS2      = 3,
     SIMULATORAPI_SCSTRUCKSIM2      = 4,
+    SIMULATORAPI_OUTSIMOUTGAUGE    = 5,
 }
 SimulatorAPI;
 
@@ -39,7 +40,10 @@ typedef enum
     SIMULATOREXE_AMERICANTRUCKS               = 270880, //at
     SIMULATOREXE_ASSETTO_CORSA_COMPETIZIONE   = 805550, //acc
     SIMULATOREXE_ASSETTO_CORSA_EVO            = 3058630, //ace
+    SIMULATOREXE_ASSETTO_CORSA_RALLY          = 3917090, //acr
     SIMULATOREXE_LEMANS_ULTIMATE              = 2399420, //lmu
+    SIMULATOREXE_BEAMNG                       = 284160, //beamng
+    SIMULATOREXE_LIVE_FOR_SPEED               = 0000001, //lfs
 }
 SimulatorEXE;
 
@@ -58,6 +62,10 @@ typedef enum
     DOUBLE        = 1,
     FLOAT         = 2,
     CHAR          = 3,
+    BOOLEAN       = 4,
+    UINT8         = 5,
+    UINT32        = 6,
+    UINT64        = 7,
 }
 SimDataType;
 

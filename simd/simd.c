@@ -14,15 +14,22 @@
 #include <pwd.h>
 #include <libconfig.h>
 
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #include <simapi.h>
 #include <simdata.h>
 #include <simmapper.h>
+#include "../simapi/test.h"
+#include "../simmap/basicmap.h"
 
 #include "../simapi/getpid.h"
 #include "loopdata.h"
 #include "parameters.h"
 #include "dirhelper.h"
 #include "confighelper.h"
+#include "poke.h"
 
 #define PID_FILE "/tmp/simd.pid"
 
@@ -44,9 +51,9 @@ uv_timer_t datamaptimer;
 uv_timer_t bridgeclosetimer;
 uv_udp_t recv_socket;
 
-bool doui = false;
 int appstate = 0;
 int compat_info_size = 0;
+int gamepid = 0;
 
 void shmdatamapcallback(uv_timer_t* handle);
 void datacheckcallback(uv_timer_t* handle);
@@ -70,8 +77,6 @@ void simapilib_logtrace(char* message)
 
 int set_settings(Parameters* p, SimdSettings* simds)
 {
-    // future config file read goes here, which can be overriden by cli options
-
     simds->force_udp = false;
     if(p->udp_count > 0)
     {
@@ -96,11 +101,25 @@ int set_settings(Parameters* p, SimdSettings* simds)
         simds->notify = p->notify;
     }
 
-    simds->auto_bridge = true;
-    if(p->bridge_count > 0)
+    simds->auto_bridge = p->bridge;
+
+    simds->poke = false;
+    if(p->poke == true)
     {
-        simds->auto_bridge = p->bridge;
+        simds->pokesetting = strdup(p->pokesetting);
+        simds->poke = true;
     }
+
+
+    if(p->targetval == false)
+    {
+        simds->poke = false;
+    }
+    else
+    {
+        simds->targetvalue = strdup(p->targetvalue); 
+    }
+    fprintf(stderr, "starting simd\n");
 }
 
 static void close_walk_cb(uv_handle_t* handle, void* arg) {
@@ -110,9 +129,11 @@ static void close_walk_cb(uv_handle_t* handle, void* arg) {
 #define ASSERT(expr) expr
 void release()
 {
+    y_log_message(Y_LOG_LEVEL_INFO, "calling release method");
     uv_timer_stop(&gamefindtimer);
     uv_timer_stop(&datamaptimer);
     uv_timer_stop(&datachecktimer);
+    uv_udp_recv_stop(&recv_socket);
     uv_timer_stop(&bridgeclosetimer);
     uv_walk(uv_default_loop(), close_walk_cb, NULL);
     uv_run(uv_default_loop(), UV_RUN_DEFAULT);
@@ -158,6 +179,40 @@ void handle_sigterm(int sig) {
     exit(0);
 }
 
+void releaseloop(LoopData* f, SimData* simdata, SimMap* simmap)
+{
+    if(f->releasing == false)
+    {
+
+        f->releasing = true;
+        appstate = 1;
+        uv_timer_stop(&datamaptimer);
+        uv_udp_recv_stop(&recv_socket);
+        y_log_message(Y_LOG_LEVEL_INFO, "stopping data mapping, please wait");
+        f->uion = false;
+    
+        // help things spin down
+        simdata->simstatus = 0;
+        simdata->rpms = 0;
+        simdata->velocity = 0;
+        if (simmap2 != NULL)
+        {
+            simdmap(simmap2, simdata);
+        }
+
+        int r = simfree(simdata, simmap, f->sim);
+        y_log_message(Y_LOG_LEVEL_DEBUG, "simfree returned %i", r);
+        y_log_message(Y_LOG_LEVEL_INFO, "stopped mapping data, press q again to quit");
+       
+        f->releasing = false;
+        if(appstate > 1)
+        {
+            appstate = 1;
+        }
+    }
+
+}
+
 void shmdatamapcallback(uv_timer_t* handle)
 {
     void* b = uv_handle_get_data((uv_handle_t*) handle);
@@ -165,44 +220,16 @@ void shmdatamapcallback(uv_timer_t* handle)
     SimData* simdata = f->simdata;
     SimMap* simmap = f->simmap;
     SimMap* simmap2 = f->simmap2;
+    SimdSettings simds = f->simds;
     //appstate = 2;
     if (appstate == 2)
     {
         simdatamap(simdata, simmap, simmap2, f->sim, false, NULL);
-        doui = false;
     }
 
     if (f->simstate == false || simdata->simstatus <= 1 || appstate <= 1)
     {
-        if(f->releasing == false)
-        {
-            f->releasing = true;
-            uv_timer_stop(handle);
-            y_log_message(Y_LOG_LEVEL_INFO, "releasing devices, please wait");
-            f->uion = false;
-
-            // help things spin down
-            simdata->rpms = 0;
-            simdata->velocity = 0;
-            int r = simfree(simdata, simmap, f->sim);
-            y_log_message(Y_LOG_LEVEL_DEBUG, "simfree returned %i", r);
-            y_log_message(Y_LOG_LEVEL_INFO, "stopped mapping data, press q again to quit");
-            //stopui(ms->ui_type, f);
-            // free loop data
-
-            if(appstate > 0)
-            {
-                // not sure what to do here yet, but this needs to be different if you have auto bridge enabled
-                // or the data check algorithm needs to check and see if any process is even running
-                // if there isn't kill the bridge if you can and return to the gamefind if autobridge is enabled
-                uv_timer_start(&datachecktimer, datacheckcallback, 3000, 1000);
-            }
-            f->releasing = false;
-            if(appstate > 1)
-            {
-                appstate = 1;
-            }
-        }
+        releaseloop(f, simdata, simmap);
     }
 }
 
@@ -214,6 +241,13 @@ void on_alloc(uv_handle_t* client, size_t suggested_size, uv_buf_t* buf) {
 
 static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf, const struct sockaddr* addr, unsigned flags) {
 
+    //if (nread > 0) {
+    //    slogt("udp data received");
+    //}
+    if (nread <= 0) {
+        free(rcvbuf->base);
+        return;
+    }
     char* a;
     a = rcvbuf->base;
 
@@ -221,35 +255,16 @@ static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf,
     LoopData* f = (LoopData*) b;
     SimData* simdata = f->simdata;
     SimMap* simmap = f->simmap;
+    SimMap* simmap2 = f->simmap2;
 
     if (appstate == 2)
     {
-        simdatamap(simdata, simmap, NULL, f->sim, true, a);
+        simdatamap(simdata, simmap, simmap2, f->sim, true, a);
     }
 
     if (f->simstate == false || simdata->simstatus <= 1 || appstate <= 1)
     {
-        if(f->releasing == false)
-        {
-            f->releasing = true;
-            uv_udp_recv_stop(handle);
-            y_log_message(Y_LOG_LEVEL_CURRENT, "releasing devices, please wait");
-            f->uion = false;
-
-            int r = simfree(simdata, simmap, f->sim);
-            y_log_message(Y_LOG_LEVEL_DEBUG, "simfree returned %i", r);
-            y_log_message(Y_LOG_LEVEL_INFO, "stopped mapping data, press q again to quit");
-
-            if(appstate > 0)
-            {
-                uv_timer_start(&datachecktimer, datacheckcallback, 3000, 1000);
-            }
-            f->releasing = false;
-            if(appstate > 1)
-            {
-                appstate = 1;
-            }
-        }
+        releaseloop(f, simdata, simmap);
     }
 
     free(rcvbuf->base);
@@ -261,6 +276,7 @@ int startudp(int port)
     struct sockaddr_in recv_addr;
     uv_ip4_addr("0.0.0.0", port, &recv_addr);
     int err = uv_udp_bind(&recv_socket, (const struct sockaddr *) &recv_addr, UV_UDP_REUSEADDR);
+    y_log_message(Y_LOG_LEVEL_DEBUG, "initial udp error is %i", err);
 
     return err;
 }
@@ -287,6 +303,8 @@ void bridgeclosecallback(uv_timer_t* handle)
 {
     void* b = uv_handle_get_data((uv_handle_t*) handle);
     LoopData* f = (LoopData*) b;
+    SimData* simdata = f->simdata;
+    SimMap* simmap = f->simmap;
 
     if(is_pid_running(f->game_pid) == 0)
     {
@@ -299,11 +317,29 @@ void bridgeclosecallback(uv_timer_t* handle)
             system(cmd);
         }
 
-        kill(f->bridge_pid, SIGTERM);
+        if(f->bridge_pid > 0)
+        {
+            kill(f->bridge_pid, SIGTERM);
+            y_log_message(Y_LOG_LEVEL_INFO, "Sent SIGTERM to bridge pid");
+        }
         f->bridge_pid = 0;
         f->game_pid = 0;
         uv_timer_stop(handle);
-        uv_timer_start(&gamefindtimer, gamefindcallback, 5, 1000);
+        appstate = 1;
+        releaseloop(f, simdata, simmap);
+        //int r = simfree(simdata, simmap, f->sim);
+        //y_log_message(Y_LOG_LEVEL_DEBUG, "simfree returned %i.", r);
+
+        if(simds.auto_bridge == true)
+        {
+            y_log_message(Y_LOG_LEVEL_INFO, "Starting Bridge Polling Thread.");
+            uv_timer_start(&gamefindtimer, gamefindcallback, 1000, 1000);
+        }
+        else
+        {
+            y_log_message(Y_LOG_LEVEL_INFO, "Starting Data Mapping Thread.");
+            uv_timer_start(&datachecktimer, datacheckcallback, 1000, 1000);
+        }
     }
 }
 
@@ -313,6 +349,7 @@ void gamefindcallback(uv_timer_t* handle)
     LoopData* f = (LoopData*) b;
     SimdSettings simds = f->simds;
     GameCompatInfo* game_compat_info = f->game_compat_info;
+
 
     int i = 0;
     int gamepid = -1;
@@ -331,7 +368,9 @@ void gamefindcallback(uv_timer_t* handle)
     if(gamepid <= 0 && sim <= 0)
     {
         i = -1;
-        sim = getSimExe();
+        SimInfo si;
+        sim = getSimExe(&si);
+        gamepid = si.pid;
     }
 
 
@@ -486,8 +525,6 @@ void gamefindcallback(uv_timer_t* handle)
                     y_log_message(Y_LOG_LEVEL_DEBUG, "Fork was successful looking for data next");
                     //double check that process is running
                     uv_timer_start(&datachecktimer, datacheckcallback, 5, 1000);
-                    // i can make this more frequent but i need to be conscious of resources, don't want to trash anyone's frame rates
-                    uv_timer_start(&bridgeclosetimer, bridgeclosecallback, 5, 5000);
                     uv_timer_stop(handle);
                 }
                 if(process == -1)
@@ -514,6 +551,20 @@ void gamefindcallback(uv_timer_t* handle)
             }
         }
     }
+    if (appstate == 0)
+    {
+        y_log_message(Y_LOG_LEVEL_INFO, "stopping checking for exe");
+        uv_timer_stop(handle);
+    }
+}
+
+
+void udpstart(LoopData* f, SimData* simdata, SimMap* simmap)
+{
+    if (appstate == 2)
+    {
+        simdatamap(simdata, NULL, simmap2, f->sim, true, NULL);
+    }
 }
 
 void datacheckcallback(uv_timer_t* handle)
@@ -523,7 +574,7 @@ void datacheckcallback(uv_timer_t* handle)
     SimData* simdata = f->simdata;
     SimMap* simmap = f->simmap;
     SimMap* simmap2 = f->simmap2;
-
+    
     if ( appstate == 1 )
     {
         SimInfo si = getSim(simdata, simmap, false, startudp, true);
@@ -531,14 +582,13 @@ void datacheckcallback(uv_timer_t* handle)
         f->simstate = si.isSimOn;
         f->sim = si.simulatorapi;
         f->use_udp = si.SimUsesUDP;
-
     }
     if (f->simstate == true && simdata->simstatus >= 2)
     {
         if ( appstate == 1 )
         {
             appstate++;
-            doui = true;
+
             //simdata->tyrediameter[0] = -1;
             //simdata->tyrediameter[1] = -1;
             //simdata->tyrediameter[2] = -1;
@@ -546,7 +596,8 @@ void datacheckcallback(uv_timer_t* handle)
 
             if(f->use_udp == true)
             {
-                //udpstart(f, simdata, simmap);
+                y_log_message(Y_LOG_LEVEL_INFO, "using udp for this sim title");
+                udpstart(f, simdata, simmap);
                 uv_udp_recv_start(&recv_socket, on_alloc, on_udp_recv);
             }
             else
@@ -554,6 +605,8 @@ void datacheckcallback(uv_timer_t* handle)
                 uv_timer_start(&datamaptimer, shmdatamapcallback, 2000, 16);
             }
             uv_timer_stop(handle);
+            // i can make this more frequent but i need to be conscious of resources, don't want to trash anyone's frame rates
+            uv_timer_start(&bridgeclosetimer, bridgeclosecallback, 5, 5000);
         }
     }
 
@@ -572,7 +625,7 @@ void cb(uv_poll_t* handle, int status, int events)
     scanf("%c", &ch);
     if (ch == 'q')
     {
-        if(f->releasing == false && doui == false)
+        if(f->releasing == false)
         {
             appstate--;
             y_log_message(Y_LOG_LEVEL_INFO, "User requested stop appstate is now %i", appstate);
@@ -584,6 +637,8 @@ void cb(uv_poll_t* handle, int status, int events)
     {
         y_log_message(Y_LOG_LEVEL_INFO, "simd is exiting...");
         uv_timer_stop(&datachecktimer);
+        uv_udp_recv_stop(&recv_socket);
+        uv_timer_stop(&bridgeclosetimer);
         uv_timer_stop(&gamefindtimer);
         uv_poll_stop(handle);
     }
@@ -600,6 +655,7 @@ int main(int argc, char** argv)
     }
     simds.home_dir = strdup(home_dir_str);
 
+
     // cli parameters
     p = malloc(sizeof(Parameters));
     ConfigError ppe = getParameters(argc, argv, p);
@@ -614,16 +670,20 @@ int main(int argc, char** argv)
         ylog_mode = Y_LOG_MODE_CONSOLE;
     }
 
-    if(simds.daemon == true)
+
+    int pid_file_fd = open(PID_FILE, O_WRONLY | O_CREAT | O_EXCL, 0666);
+    if(pid_file_fd == -1)
     {
-        int pid_file_fd = open(PID_FILE, O_WRONLY | O_CREAT | O_EXCL);
-        if(pid_file_fd == -1)
+        if( simds.poke == true )
         {
-            fprintf(stderr, "simd daemon already running, please remove /tmp/simd.pid if this is not the case.\n");
-            goto cleanup_final;
+            fprintf(stderr, "poke enabled and attempting poke.\n");
+            poke(simds);
         }
-        close(pid_file_fd);
+        fprintf(stderr, "simd daemon already running, please remove /tmp/simd.pid if this is not the case.\n");
+        
+        goto cleanup_final;
     }
+    close(pid_file_fd);
 
     y_init_logs("simd", ylog_mode, Y_LOG_LEVEL_DEBUG, "/tmp/simd.log", "Initializing logs mode: file, logs level: debug");
     y_log_message(Y_LOG_LEVEL_INFO, "Started. Found home directory and interpreted parameters.\n");
@@ -723,8 +783,6 @@ int main(int argc, char** argv)
         char ch;
         struct pollfd mypoll = { STDIN_FILENO, POLLIN|POLLPRI };
     }
-
-
 
     set_simapi_log_info(simapilib_loginfo);
     if(p->verbosity_count>0)

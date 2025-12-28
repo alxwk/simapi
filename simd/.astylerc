@@ -1,0 +1,13 @@
+
+--lineend=linux
+--style=break
+--indent=spaces
+--convert-tabs
+--indent-switches
+
+
+--break-elseifs
+--add-braces
+
+--align-pointer=type
+--align-reference=type

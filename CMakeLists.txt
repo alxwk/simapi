@@ -1,13 +1,12 @@
 cmake_minimum_required(VERSION 3.9)
 project(simapi VERSION 1.0.1 DESCRIPTION "Telemetry Mapping Library for Racing Sims")
 include(GNUInstallDirs)
-add_library(simapi SHARED simapi/simmapper.c simapi/getpid.c simapi/mapping/acmapper.c simapi/mapping/pcars2mapper.c simapi/mapping/rf2mapper.c simapi/mapping/scs2mapper.c)
+add_library(simapi SHARED simapi/simmapper.c simapi/getpid.c simapi/mapping/acmapper.c simapi/mapping/pcars2mapper.c simapi/mapping/rf2mapper.c simapi/mapping/scs2mapper.c simapi/mapping/outgaugemapper.c)
 
 set(SIMAPI_PUBLIC_HEADERS
     "simapi/simmapper.h"
     "simapi/simapi.h"
-    "simapi/simdata.h"
-    "simapi/ac.h")
+    "simapi/simdata.h")
 
 set_target_properties(simapi PROPERTIES
     VERSION ${PROJECT_VERSION}

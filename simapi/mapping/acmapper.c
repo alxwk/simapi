@@ -76,7 +76,7 @@ int acc_get_global_flag(int yellow, int white, int chequered, int green, int red
 }
 
 
-void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
+void map_assetto_corsa_data(SimData* simdata, SimMap* simmap, SimulatorEXE simexe)
 {
 
     char* a;
@@ -84,7 +84,7 @@ void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
     char* c;
     char* d;
 
-    a = simmap->d.ac.physics_map_addr;
+    a = simmap->ac.physics_map_addr;
 
     // basic telemetry
     simdata->rpms = *(uint32_t*) (char*) (a + offsetof(struct SPageFilePhysics, rpms));
@@ -192,11 +192,20 @@ void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
     simdata->tracktemp = *(float*) (char*) (a + offsetof(struct SPageFilePhysics, roadTemp));
 
 
-    if ( simmap->d.ac.has_graphic == true )
+    if ( simmap->ac.has_graphic == true )
     {
-        c = simmap->d.ac.graphic_map_addr;
+        c = simmap->ac.graphic_map_addr;
 
-        simdata->simstatus = *(int*) (char*) (c + offsetof(struct SPageFileGraphic, status));
+        // temporary workaround for beta data from ACEvo and ACRally
+        if(simexe == SIMULATOREXE_ASSETTO_CORSA_EVO || simexe == SIMULATOREXE_ASSETTO_CORSA_RALLY)
+        {
+            simdata->simstatus = SIMAPI_STATUS_ACTIVEPLAY;
+        }
+        else
+        {
+            simdata->simstatus = *(int*) (char*) (c + offsetof(struct SPageFileGraphic, status));
+        }
+
         simdata->lap = *(uint32_t*) (char*) (c + offsetof(struct SPageFileGraphic, completedLaps));
         simdata->position = *(uint32_t*) (char*) (c + offsetof(struct SPageFileGraphic, position));
         uint32_t lastlap = *(uint32_t*) (char*) (c + offsetof(struct SPageFileGraphic, iLastTime));
@@ -224,7 +233,7 @@ void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
         {
             simdata->tyrecompound[i] = *(char*) (char*) ((c + offsetof(struct SPageFileGraphic, tyreCompound)) + (sizeof(char16_t) * i));
         }
-        //simdata->tyrecompound = simmap->d.ac.compound;
+        //simdata->tyrecompound = simmap->ac.compound;
 
         //float timeleft = *(float*) (char*) (c + offsetof(struct SPageFileGraphic, sessionTimeLeft));
         //if (timeleft < 0)
@@ -234,11 +243,20 @@ void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
     }
 
     simdata->maxturbo = 0;
-    if (simmap->d.ac.has_static == true )
+    if (simmap->ac.has_static == true )
     {
-        b = simmap->d.ac.static_map_addr;
+        b = simmap->ac.static_map_addr;
         simdata->maxrpm = *(uint32_t*) (char*) (b + offsetof(struct SPageFileStatic, maxRpm));
         simdata->maxturbo = *(float*) (char*) (b + offsetof(struct SPageFileStatic, MaxTurboBoost));
+
+        simdata->tyrediameter[0] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 0));
+        simdata->tyrediameter[1] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 1));
+        simdata->tyrediameter[2] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 2));
+        simdata->tyrediameter[3] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 3));
+        for(int j=0; j<4; j++)
+        {
+            simdata->tyrediameter[j] = simdata->tyrediameter[j] * 2;
+        }
 
         int strsize = 32;
         for(int i=0; i<strsize; i++)
@@ -246,24 +264,15 @@ void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
             simdata->car[i] = *(char*) (char*) ((b + offsetof(struct SPageFileStatic, carModel)) + (sizeof(char16_t) * i));
             simdata->track[i] = *(char*) (char*) ((b + offsetof(struct SPageFileStatic, track)) + (sizeof(char16_t) * i));
             simdata->driver[i] = *(char*) (char*) ((b + offsetof(struct SPageFileStatic, playerName)) + (sizeof(char16_t) * i));
-
-            simdata->tyrediameter[0] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 0));
-            simdata->tyrediameter[1] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 1));
-            simdata->tyrediameter[2] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 2));
-            simdata->tyrediameter[3] = *(float*) (char*) (b + offsetof(struct SPageFileStatic, tyreRadius) + (sizeof(float) * 3));
-
-            for(int j=0; j<4; j++)
-            {
-                simdata->tyrediameter[j] = simdata->tyrediameter[j] * 2;
-            }
         }
 
     }
     simdata->turboboost = simdata->turboboostperct * simdata->maxturbo;
+
     // realtime telemetry
-    if (simmap->d.ac.has_crewchief == true && simdata->simexe != SIMULATOREXE_ASSETTO_CORSA_COMPETIZIONE )
+    if (simmap->ac.has_crewchief == true && simdata->simexe != SIMULATOREXE_ASSETTO_CORSA_COMPETIZIONE )
     {
-        d = simmap->d.ac.crewchief_map_addr;
+        d = simmap->ac.crewchief_map_addr;
 
         simdata->worldposx = *(float*) (char*) (d + offsetof(struct SPageFileCrewChief, vehicle) + ((sizeof(acsVehicleInfo) * 0) + offsetof(acsVehicleInfo, worldPosition) + offsetof(acsVec3, x)));
         simdata->worldposz = *(float*) (char*) (d + offsetof(struct SPageFileCrewChief, vehicle) + ((sizeof(acsVehicleInfo) * 0) + offsetof(acsVehicleInfo, worldPosition) + offsetof(acsVec3, y)));
@@ -279,7 +288,7 @@ void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
         simdata->trackdistancearound = spLineLengthToDistanceRoundTrack(track_spline, player_spline);
         int track_samples = track_spline * 4;
         simdata->tracksamples = track_samples;
-        simdata->playertrackpos = (int) track_samples * player_spline;
+        simdata->playertrackpos = (int) simdata->trackdistancearound;
 
         simdata->numcars = *(uint32_t*) (char*) (d + offsetof(struct SPageFileCrewChief, numVehicles));
         int numcars = simdata->numcars;
@@ -312,7 +321,8 @@ void map_assetto_corsa_data(SimData* simdata, SimMap* simmap)
 
             //simdata->cars[i].carspline = *(float*) (char*) (d + offsetof(struct SPageFileCrewChief, vehicle) + ((sizeof(acsVehicleInfo) * i) + offsetof(acsVehicleInfo, spLineLength)));
             float spline = *(float*) (char*) (d + offsetof(struct SPageFileCrewChief, vehicle) + ((sizeof(acsVehicleInfo) * i) + offsetof(acsVehicleInfo, spLineLength)));
-            simdata->cars[i].trackpos = (int) track_samples * spline;
+            simdata->cars[i].trackpos = spLineLengthToDistanceRoundTrack(track_spline, spline);
+            //simdata->cars[i].trackpos = (int) track_spline * spline;
             simdata->cars[i].xpos = *(float*) (char*) (d + offsetof(struct SPageFileCrewChief, vehicle) + ((sizeof(acsVehicleInfo) * i) + offsetof(acsVehicleInfo, worldPosition) + offsetof(acsVec3, x)));
             simdata->cars[i].zpos = *(float*) (char*) (d + offsetof(struct SPageFileCrewChief, vehicle) + ((sizeof(acsVehicleInfo) * i) + offsetof(acsVehicleInfo, worldPosition) + offsetof(acsVec3, y)));
             simdata->cars[i].ypos = *(float*) (char*) (d + offsetof(struct SPageFileCrewChief, vehicle) + ((sizeof(acsVehicleInfo) * i) + offsetof(acsVehicleInfo, worldPosition) + offsetof(acsVec3, z)));

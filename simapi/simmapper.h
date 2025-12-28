@@ -5,6 +5,7 @@
 //#include "rf2.h"
 //#include "pcars2.h"
 //#include "scs2.h"
+#include <signal.h>
 
 #include "simdata.h"
 #include "simapi.h"
@@ -21,6 +22,7 @@ typedef struct
     SimulatorAPI mapapi;
     SimulatorAPI simulatorapi;
     SimulatorEXE simulatorexe;
+    pid_t pid;
 }
 SimInfo;
 
@@ -58,7 +60,7 @@ typedef struct
 SimCompatMap;
 
 bool does_sim_need_bridge(SimulatorEXE s);
-SimulatorEXE getSimExe();
+SimulatorEXE getSimExe(SimInfo* si);
 SimInfo getSim(SimData* simdata, SimMap* simmap, bool force_udp, int (*setup_udp)(int), bool simd);
 int siminit(SimData* simdata, SimMap* simmap, SimulatorAPI simulator);
 int siminitudp(SimData* simdata, SimMap* simmap, SimulatorAPI simulator);
@@ -79,9 +81,10 @@ int freesimcompatmap(SimCompatMap* compatmap);
 
 void SetProximityData(SimData* simdata, int cars, int8_t lr_flip);
 
-void map_assetto_corsa_data(SimData* simdata, SimMap* simmap);
+void map_assetto_corsa_data(SimData* simdata, SimMap* simmap, SimulatorEXE simexe);
 void map_rfactor2_data(SimData* simdata, SimMap* simmap);
 void map_project_cars2_data(SimData* simdata, SimMap* simmap, bool udp, char* base);
 void map_trucks_data(SimData* simdata, SimMap* simmap);
+void map_outgauge_outsim_data(SimData* simdata, SimMap* simmap, SimulatorEXE simexe, char* base);
 
 #endif

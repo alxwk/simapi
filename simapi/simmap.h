@@ -10,13 +10,12 @@ struct _simmap
 {
     void* addr;
     int fd;
-    union
-    {
-        ACMap ac;
-        RF2Map rf2;
-        PCars2Map pcars2;
-        SCS2Map scs2;
-    } d;
+    bool hasSimApiDat;
+
+    ACMap ac;
+    RF2Map rf2;
+    PCars2Map pcars2;
+    SCS2Map scs2;
 };
 
 #endif
